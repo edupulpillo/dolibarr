@@ -1516,10 +1516,12 @@ function top_httphead($contenttype = 'text/html', $forcenocache = 0)
 {
 	global $db, $conf, $hookmanager;
 
-	if ($contenttype == 'text/html') {
-		header("Content-Type: text/html; charset=".$conf->file->character_set_client);
-	} else {
-		header("Content-Type: ".$contenttype);
+	if ($contenttype != 'none') {
+		if ($contenttype == 'text/html') {
+			header("Content-Type: text/html; charset=".$conf->file->character_set_client);
+		} else {
+			header("Content-Type: ".$contenttype);
+		}
 	}
 
 	// Security options
@@ -2935,6 +2937,14 @@ function printDropdownQuickadd($mode = 0)
 				"picto" => "object_service",
 				"activation" => isModEnabled("service") && $user->hasRight("service", "write"), // vs hooking
 				"position" => 410,
+			),
+			array(
+				"url" => "/product/stock/stocktransfer/stocktransfer_card.php?action=create&amp;mainmenu=products",
+				"title" => "StockTransferNew@stocks",
+				"name" => "StockTransfer@stocks",
+				"picto" => "stock",
+				"activation" => isModEnabled("stocktransfer") && $user->hasRight("stocktransfer", "stocktransfer", "write"), // vs hooking
+				"position" => 415,
 			),
 			array(
 				"url" => "/user/card.php?action=create&amp;type=1&amp;mainmenu=home",

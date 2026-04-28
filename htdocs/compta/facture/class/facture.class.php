@@ -1277,7 +1277,7 @@ class Facture extends CommonInvoice
 	 */
 	public function createFromClone(User $user, $fromid = 0)
 	{
-		global $conf, $hookmanager;
+		global $hookmanager;
 
 		$error = 0;
 
@@ -1368,6 +1368,7 @@ class Facture extends CommonInvoice
 		// Create clone
 		$object->context['createfromclone'] = 'createfromclone';
 		$result = $object->create($user);
+
 		if ($result < 0) {
 			$error++;
 			$this->setErrorsFromObject($object);
@@ -1426,6 +1427,9 @@ class Facture extends CommonInvoice
 		// Closed order
 		$this->date = dol_now();
 		$this->source = 0;
+
+		// Avoid updating the row ranks
+		$this->context['createfromclone'] = 1;
 
 		$num = count($object->lines);
 		for ($i = 0; $i < $num; $i++) {
@@ -1534,12 +1538,14 @@ class Facture extends CommonInvoice
 				$this->setErrorsFromObject($hookmanager);
 				$error++;
 			}
+		} else {
+			$error++;
+		}
 
-			if (!$error) {
-				return 1;
-			} else {
-				return -1;
-			}
+		unset($this->context['createfromclone']);
+
+		if (!$error) {
+			return 1;
 		} else {
 			return -1;
 		}
