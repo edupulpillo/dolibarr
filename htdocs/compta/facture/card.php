@@ -491,6 +491,7 @@ if (empty($reshook)) {
 			setEventMessages($object->error, $object->errors, 'errors');
 		}
 	} elseif ($action == 'setretainedwarrantyconditions' && $usercancreate) {
+		/** @var Facture $object */
 		$object->fetch($id);
 		$object->retained_warranty_fk_cond_reglement = 0; // To clean property
 		$result = $object->setRetainedWarrantyPaymentTerms(GETPOSTINT('retained_warranty_fk_cond_reglement'));
@@ -689,9 +690,11 @@ if (empty($reshook)) {
 			}
 
 			if (!$error) {
-				$newremaintopay = $object->getRemainToPay(0);
-				if ($newremaintopay == 0) {
-					$object->setPaid($user);
+				if ($object->status == Facture::STATUS_VALIDATED) {
+					$newremaintopay = $object->getRemainToPay(0);
+					if ($newremaintopay == 0) {
+						$object->setPaid($user);
+					}
 				}
 			}
 		}
@@ -884,30 +887,32 @@ if (empty($reshook)) {
 			// We check if no payment has been made
 			if ($ventilExportCompta == 0) {
 				if (getDolGlobalString('INVOICE_CAN_BE_EDITED_EVEN_IF_PAYMENT_DONE') || ($resteapayer == $object->total_ttc && empty($object->paye))) {
+					// Set invoice to draft status
 					$result = $object->setDraft($user, $idwarehouse);
+
 					if ($result < 0) {
 						setEventMessages($object->error, $object->errors, 'errors');
-					}
+					} else {
+						// Define output language
+						if (!getDolGlobalString('MAIN_DISABLE_PDF_AUTOUPDATE')) {
+							$outputlangs = $langs;
+							$newlang = '';
+							if (getDolGlobalInt('MAIN_MULTILANGS') /* && empty($newlang) */ && GETPOST('lang_id', 'aZ09')) {
+								$newlang = GETPOST('lang_id', 'aZ09');
+							}
+							if (getDolGlobalInt('MAIN_MULTILANGS') && empty($newlang)) {
+								$newlang = $object->thirdparty->default_lang;
+							}
+							if (!empty($newlang)) {
+								$outputlangs = new Translate("", $conf);
+								$outputlangs->setDefaultLang($newlang);
+								$outputlangs->load('products');
+							}
+							$model = $object->model_pdf;
+							$ret = $object->fetch($id); // Reload to get new records
 
-					// Define output language
-					if (!getDolGlobalString('MAIN_DISABLE_PDF_AUTOUPDATE')) {
-						$outputlangs = $langs;
-						$newlang = '';
-						if (getDolGlobalInt('MAIN_MULTILANGS') /* && empty($newlang) */ && GETPOST('lang_id', 'aZ09')) {
-							$newlang = GETPOST('lang_id', 'aZ09');
+							$object->generateDocument($model, $outputlangs, $hidedetails, $hidedesc, $hideref);
 						}
-						if (getDolGlobalInt('MAIN_MULTILANGS') && empty($newlang)) {
-							$newlang = $object->thirdparty->default_lang;
-						}
-						if (!empty($newlang)) {
-							$outputlangs = new Translate("", $conf);
-							$outputlangs->setDefaultLang($newlang);
-							$outputlangs->load('products');
-						}
-						$model = $object->model_pdf;
-						$ret = $object->fetch($id); // Reload to get new records
-
-						$object->generateDocument($model, $outputlangs, $hidedetails, $hidedesc, $hideref);
 					}
 				}
 			}
@@ -1246,6 +1251,7 @@ if (empty($reshook)) {
 
 		$originentity = GETPOSTINT('originentity');
 		$object->demand_reason_id = $inputReasonId;
+
 		// Fill array 'array_options' with data from add form
 		$ret = $extrafields->setOptionalsFromPost(null, $object);
 		if ($ret < 0) {
@@ -1258,7 +1264,7 @@ if (empty($reshook)) {
 		$classname = null;
 
 
-		// Replacement invoice
+		// Add a Replacement invoice
 		if (GETPOST('type') == Facture::TYPE_REPLACEMENT) {
 			if (empty($dateinvoice)) {
 				$error++;
@@ -1308,7 +1314,7 @@ if (empty($reshook)) {
 			}
 		}
 
-		// Credit note invoice
+		// Add a Credit note invoice
 		if (GETPOST('type') == Facture::TYPE_CREDIT_NOTE) {
 			$sourceinvoice = GETPOSTINT('fac_avoir');
 			if (!($sourceinvoice > 0) && !getDolGlobalString('INVOICE_CREDIT_NOTE_STANDALONE')) {
@@ -1361,14 +1367,16 @@ if (empty($reshook)) {
 				$object->type = Facture::TYPE_CREDIT_NOTE;
 
 				$facture_source = new Facture($db); // fetch origin object
-				if ($facture_source->fetch($object->fk_facture_source) > 0) {
+				if ($object->fk_facture_source > 0 && $facture_source->fetch($object->fk_facture_source) > 0) {
 					if ($facture_source->isSituationInvoice()) {
 						$object->situation_counter = $facture_source->situation_counter;
 						$object->situation_cycle_ref = $facture_source->situation_cycle_ref;
 						$facture_source->fetchPreviousNextSituationInvoice();
 					}
-				}
 
+					$object->pos_source = $facture_source->pos_source;			// We must reuse the same than original values so correction will appear in same terminal same original invoice for conformity
+					$object->module_source = $facture_source->module_source;		// We must reuse the same than original values so correction will appear in same terminal same original invoice for conformity
+				}
 
 				$id = $object->create($user);
 				if ($id < 0) {
@@ -3731,7 +3739,7 @@ if ($action == 'create') {
 	}
 
 	// Load objectsrc
-	$objectsrc = null;  // Initialise
+	$objectsrc = null;
 	if (!empty($origin) && !empty($originid)) {
 		// Parse element/subelement (ex: project_task)
 		$element = $subelement = $origin;
@@ -3775,8 +3783,8 @@ if ($action == 'create') {
 
 			$classname = ucfirst($subelement);
 			$objectsrc = new $classname($db);
-			'@phan-var-force Commande|Propal|Contrat|Expedition $objectsrc';
-			/** @var Commande|Propal|Contrat|Expedition $objectsrc */
+			'@phan-var-force Commande|Propal|Contrat|Expedition|Facture $objectsrc';
+			/** @var Commande|Propal|Contrat|Expedition|Facture $objectsrc */
 			$objectsrc->fetch($originid);
 			if (empty($objectsrc->lines) && method_exists($objectsrc, 'fetch_lines')) {
 				$objectsrc->fetch_lines();
@@ -4539,10 +4547,9 @@ if ($action == 'create') {
 			$retained_warranty_fk_cond_reglement = GETPOSTINT('retained_warranty_fk_cond_reglement');
 			if (empty($retained_warranty_fk_cond_reglement)) {
 				$retained_warranty_fk_cond_reglement = getDolGlobalString('INVOICE_SITUATION_DEFAULT_RETAINED_WARRANTY_COND_ID');
-				if (!empty($objectsrc->retained_warranty_fk_cond_reglement)) { // use previous situation value
-					$retained_warranty_fk_cond_reglement = $objectsrc->retained_warranty_fk_cond_reglement;
-				} else {
-					$retained_warranty_fk_cond_reglement = getDolGlobalString('INVOICE_SITUATION_DEFAULT_RETAINED_WARRANTY_COND_ID');
+				if ($objectsrc instanceOf Facture && !empty($objectsrc->retained_warranty_fk_cond_reglement)) { // use previous situation value
+					// Facture->retained_warranty_fk_cond_reglement (does not exist on Expedition)
+					$retained_warranty_fk_cond_reglement = $objectsrc->retained_warranty_fk_cond_reglement; // @phan-suppress-current-line PhanUndeclaredProperty
 				}
 			}
 			print $form->getSelectConditionsPaiements($retained_warranty_fk_cond_reglement, 'retained_warranty_fk_cond_reglement', -1, 1);
@@ -4903,7 +4910,7 @@ if ($action == 'create') {
 
 	$head = facture_prepare_head($object);
 
-	print dol_get_fiche_head($head, 'compta', $langs->trans('InvoiceCustomer'), -1, $object->picto);
+	print dol_get_fiche_head($head, 'compta', $langs->trans('InvoiceCustomer'), -1, $object->picto, 0, '', '', 0, '', 1);
 
 	$formconfirm = '';
 
@@ -6856,7 +6863,12 @@ if ($action == 'create') {
 			// Create a credit note
 			if (($object->type == Facture::TYPE_STANDARD || ($object->type == Facture::TYPE_DEPOSIT && !getDolGlobalString('FACTURE_DEPOSITS_ARE_JUST_PAYMENTS')) || $object->type == Facture::TYPE_PROFORMA) && $object->status > 0 && $usercancreate) {
 				if (!$objectidnext) {
-					print '<a class="butAction" href="'.$_SERVER['PHP_SELF'].'?socid='.$object->socid.'&fac_avoir='.$object->id.'&action=create&type=2'.($object->fk_project > 0 ? '&amp;projectid='.$object->fk_project : '').($object->entity > 0 ? '&originentity='.$object->entity : '').'">'.$langs->trans("CreateCreditNote").'</a>';
+					print '<!-- button create credit note -->';
+					if ($object->module_source == 'takepos') {
+						print '<a class="butActionRefused classfortooltip" href="#" title="'.$langs->trans("DisabledBecauseInvoiceGeneratedBy", $langs->transnoentitiesnoconv('TakePOS')).'">'.$langs->trans("CreateCreditNote").'</a>';
+					} else {
+						print '<a class="butAction" href="'.$_SERVER['PHP_SELF'].'?socid='.$object->socid.'&fac_avoir='.$object->id.'&action=create&type=2'.($object->fk_project > 0 ? '&projectid='.$object->fk_project : '').($object->entity > 0 ? '&originentity='.$object->entity : '').'">'.$langs->trans("CreateCreditNote").'</a>';
+					}
 				}
 			}
 
